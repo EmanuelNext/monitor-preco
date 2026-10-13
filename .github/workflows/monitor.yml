@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: "*/30 * * * *"   # a cada 30 minutos
   workflow_dispatch:          # permite rodar manualmente
+    inputs:
+      teste:
+        description: Enviar uma notificação de teste
+        type: boolean
+        default: false
 
 permissions:
   contents: write             # para gravar o estado.json no repositório
@@ -21,6 +26,7 @@ jobs:
       - run: python monitor.py
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TESTE: ${{ inputs.teste }}
       - name: Salvar estado dos alertas
         if: always()
         run: |

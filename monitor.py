@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -12,9 +13,19 @@ PRECO_ALVO = 4200.00
 # Abaixo disso é quase certo que o anúncio é de outro produto (A1 mini, só o AMS, peça)
 PRECO_MINIMO_PLAUSIVEL = 2500.00
 
-# O nome do tópico funciona como senha: fica no secret NTFY_TOPIC, não no código
+PASTA = Path(__file__).parent
+# O mesmo script roda no GitHub Actions e no PC (tarefa agendada do Windows)
+NO_GITHUB = os.environ.get("GITHUB_ACTIONS") == "true"
+
+# O nome do tópico funciona como senha e não fica no código:
+# no GitHub vem do secret NTFY_TOPIC; no PC, do arquivo ntfy_topico.txt
+ARQUIVO_TOPICO = PASTA / "ntfy_topico.txt"
 TOPICO_NTFY = os.environ.get("NTFY_TOPIC", "").strip()
-ARQUIVO_ESTADO = Path(__file__).with_name("estado.json")
+if not TOPICO_NTFY and ARQUIVO_TOPICO.exists():
+    TOPICO_NTFY = ARQUIVO_TOPICO.read_text(encoding="utf-8-sig").strip()
+
+# Cada lado guarda o próprio estado, para o do PC não conflitar com o que o GitHub grava no repositório
+ARQUIVO_ESTADO = PASTA / ("estado.json" if NO_GITHUB else "estado.local.json")
 
 LOJAS = [
     {
@@ -31,6 +42,8 @@ LOJAS = [
         "nome": "Amazon",
         "url": "https://www.amazon.com.br/dp/B0DD81K7V7",
         "tipo": "amazon",
+        # A Amazon bloqueia os servidores do GitHub, então só o PC checa esta loja
+        "so_local": True,
     },
     {
         "nome": "NIC3D",
@@ -122,19 +135,30 @@ def buscar_preco(loja):
     resposta.raise_for_status()
     soup = BeautifulSoup(resposta.text, "html.parser")
     preco = EXTRATORES[loja["tipo"]](soup)
+    if preco is None and "captcha" in resposta.text.lower():
+        raise ValueError("a loja pediu captcha, bloqueando o acesso automático")
     if preco is not None and preco < PRECO_MINIMO_PLAUSIVEL:
         raise ValueError(f"preço R$ {preco:.2f} baixo demais, o anúncio deve ter mudado")
     return preco
 
 
-def notificar(loja, preco):
+def enviar_ntfy(mensagem, **headers):
     resposta = requests.post(
         f"https://ntfy.sh/{TOPICO_NTFY}",
-        data=f"{PRODUTO} por R$ {preco:.2f} na {loja['nome']} (alvo: R$ {PRECO_ALVO:.2f})".encode("utf-8"),
-        headers={"Title": "Alerta de preco", "Click": loja["url"], "Priority": "high"},
+        data=mensagem.encode("utf-8"),
+        headers=headers,
         timeout=30,
     )
     resposta.raise_for_status()
+
+
+def notificar(loja, preco):
+    enviar_ntfy(
+        f"{PRODUTO} por R$ {preco:.2f} na {loja['nome']} (alvo: R$ {PRECO_ALVO:.2f})",
+        Title="Alerta de preco",
+        Click=loja["url"],
+        Priority="high",
+    )
 
 
 def main():
@@ -143,8 +167,17 @@ def main():
     novo_estado = dict(estado)
     lidas = 0
     erro = False
+    # O GitHub checa as lojas comuns e o PC só as bloqueadas lá, assim nenhum alerta sai em dobro
+    lojas = [loja for loja in LOJAS if loja.get("so_local", False) != NO_GITHUB]
 
-    for loja in LOJAS:
+    # Marcando "teste" ao rodar o workflow manualmente, confere se o alerta chega no celular
+    if os.environ.get("TESTE") == "true":
+        if not TOPICO_NTFY:
+            sys.exit("::error::O tópico do ntfy não está definido")
+        enviar_ntfy(f"Teste do monitor de {PRODUTO}: o alerta está funcionando", Title="Teste do monitor de preco")
+        print("Notificação de teste enviada")
+
+    for loja in lojas:
         nome = loja["nome"]
         try:
             preco = buscar_preco(loja)
@@ -165,7 +198,7 @@ def main():
         if nome in estado and preco >= estado[nome]:
             continue
         if not TOPICO_NTFY:
-            print(f"::error::{nome} está abaixo do alvo, mas o secret NTFY_TOPIC não está definido")
+            print(f"::error::{nome} está abaixo do alvo, mas o tópico do ntfy não está definido")
             erro = True
             continue
         try:
@@ -187,4 +220,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.stdout is None:
+        # Tarefa agendada roda com pythonw, que não tem console: a saída vai para um arquivo
+        sys.stdout = sys.stderr = open(PASTA / "monitor.log", "a", encoding="utf-8", buffering=1)
+        print(f"--- {datetime.now():%d/%m/%Y %H:%M}")
     main()
