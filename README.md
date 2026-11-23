@@ -11,7 +11,7 @@ A Amazon bloqueia os servidores do GitHub, então ela é checada só pelo PC (lo
 O Mercado Livre não está na lista: ele redireciona qualquer acesso sem login para uma tela de verificação de conta, então o script não consegue ler o preço.
 
 ## Como funciona
-O alerta sai na primeira vez que uma loja cruza o alvo e de novo só se o preço cair ainda mais.
+Enquanto uma loja estiver abaixo do alvo, o alerta sai uma vez por dia (horário de Brasília) e, no mesmo dia, de novo só se o preço cair abaixo do último avisado.
 
 ### No GitHub
 O GitHub Actions roda o `monitor.py` a cada 30 minutos. O tópico do ntfy fica no secret `NTFY_TOPIC` (Settings > Secrets and variables > Actions) e o último preço avisado em `estado.json`, gravado pelo próprio workflow.

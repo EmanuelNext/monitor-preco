@@ -3,3 +3,4 @@ __pycache__/
 ntfy_topico.txt
 estado.local.json
 monitor.log
+ml_credenciais.txt

@@ -2,7 +2,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -161,10 +161,20 @@ def notificar(loja, preco):
     )
 
 
+def ultimo_alerta(estado, nome):
+    """Devolve (preço, dia) do último alerta; o formato antigo guardava só o preço."""
+    valor = estado.get(nome)
+    if isinstance(valor, dict):
+        return valor.get("preco"), valor.get("dia")
+    return valor, None
+
+
 def main():
-    # estado.json guarda o último preço já avisado de cada loja, para não repetir o alerta
+    # estado.json guarda o último alerta de cada loja (preço e dia), para não repetir à toa
     estado = json.loads(ARQUIVO_ESTADO.read_text(encoding="utf-8")) if ARQUIVO_ESTADO.exists() else {}
     novo_estado = dict(estado)
+    # Horário de Brasília fixo (sem horário de verão), igual no PC e no GitHub, que roda em UTC
+    hoje = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%d")
     lidas = 0
     erro = False
     # O GitHub checa as lojas comuns e o PC só as bloqueadas lá, assim nenhum alerta sai em dobro
@@ -194,8 +204,9 @@ def main():
         if preco > PRECO_ALVO:
             novo_estado.pop(nome, None)  # voltou a subir: o próximo alerta vale de novo
             continue
-        # Só avisa na primeira vez que cruza o alvo ou quando cai ainda mais
-        if nome in estado and preco >= estado[nome]:
+        # Abaixo do alvo: avisa uma vez por dia, e na hora se cair abaixo do último preço avisado
+        preco_avisado, dia_avisado = ultimo_alerta(estado, nome)
+        if dia_avisado == hoje and preco >= preco_avisado:
             continue
         if not TOPICO_NTFY:
             print(f"::error::{nome} está abaixo do alvo, mas o tópico do ntfy não está definido")
@@ -208,7 +219,7 @@ def main():
             erro = True
             continue
         print(f"{nome}: alerta enviado")
-        novo_estado[nome] = preco
+        novo_estado[nome] = {"preco": preco, "dia": hoje}
 
     if novo_estado != estado:
         ARQUIVO_ESTADO.write_text(json.dumps(novo_estado, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
